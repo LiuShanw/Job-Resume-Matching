@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.encoders import jsonable_encoder
 import pandas as pd
 import json
 from services.JobInfoExtraction import JobInfoExtraction
 from services.Rules import Rules
-from source.db_helpers.db_connection import database
+from source.db_helpers.db_connection import get_database
 from source.schemas.matched_resume import ResumeMatchedModel
 from source.schemas.jobextracted import JobExtractedModel
 import ast
@@ -12,9 +12,11 @@ from transformers import BertTokenizer, BertModel
 import torch
 import numpy as np
 from bson import ObjectId
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import os
 import logging
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -64,12 +66,18 @@ def load_gemini_model():
 gemini_model = load_gemini_model()
 
 def transform_dataframe_to_json(dataframe: pd.DataFrame) -> str:
+    """
+    Transforms a pandas DataFrame to a JSON string.
+    """
     result = dataframe.to_json(orient="records")
     parsed = json.loads(result)
     json_data = json.dumps(parsed, indent=4)
     return json_data
 
 def modifying_type_resume(resumes: pd.DataFrame) -> pd.DataFrame:
+    """
+    Modifies the types of the 'degrees' and 'skills' columns in the resumes DataFrame.
+    """
     for i in range(len(resumes["degrees"])):
         resumes["degrees"][i] = ast.literal_eval(resumes["degrees"][i])
     for i in range(len(resumes["skills"])):
@@ -77,23 +85,44 @@ def modifying_type_resume(resumes: pd.DataFrame) -> pd.DataFrame:
     return resumes
 
 def modifying_type_job(jobs: pd.DataFrame) -> pd.DataFrame:
+    """
+    Modifies the types of the 'Skills' column in the jobs DataFrame.
+    """
     for i in range(len(jobs["Skills"])):
         jobs["Skills"][i] = ast.literal_eval(jobs["Skills"][i])
     return jobs
 
+class ExtractionRequest(BaseModel):
+    degrees_patterns_path: str = Field(default='C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/degrees.jsonl')
+    majors_patterns_path: str = Field(default='C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/majors.jsonl')
+    skills_patterns_path: str = Field(default='C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/skills.jsonl')
+    jobs_path: str = Field(default='C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/job descriptions.csv')
+
+class MatchingRequest(BaseModel):
+    labels_path: str = Field(default='C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/labels.json')
+    job_desc_path: str = Field(default='C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/job_description_by_spacy.csv')
+    resumes_path: str = Field(default='C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/resumes_by_spacy.csv')
+
 app = FastAPI()
 
-@app.get("/extraction")
-async def extraction():
-    try:
-        degrees_patterns_path = os.getenv('DEGREES_PATTERNS_PATH', 'C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/degrees.jsonl')
-        majors_patterns_path = os.getenv('MAJORS_PATTERNS_PATH', 'C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/majors.jsonl')
-        skills_patterns_path = os.getenv('SKILLS_PATTERNS_PATH', 'C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/skills.jsonl')
-        jobs_path = os.getenv('JOBS_PATH', 'C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/job descriptions.csv')
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust this to your needs
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-        jobs = pd.read_csv(jobs_path, index_col=0)
+@app.post("/extraction")
+async def extraction(request: ExtractionRequest, database: AsyncIOMotorDatabase = Depends(get_database)):
+    """
+    Extracts job information and stores it in the database.
+    """
+    try:
+        jobs = pd.read_csv(request.jobs_path, index_col=0)
         jobs = jobs[['Qualifications']]
-        job_extraction = JobInfoExtraction(skills_patterns_path, majors_patterns_path, degrees_patterns_path, jobs)
+        job_extraction = JobInfoExtraction(request.skills_patterns_path, request.majors_patterns_path, request.degrees_patterns_path, jobs)
         jobs = job_extraction.extract_entities(jobs)
         for i, row in jobs.iterrows():
             minimum_degree_level = jobs['Minimum degree level'][i]
@@ -111,17 +140,16 @@ async def extraction():
         logger.error(f"Error in extraction endpoint: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-@app.get("/matching")
-async def matching():
+@app.post("/matching")
+async def matching(request: MatchingRequest, database: AsyncIOMotorDatabase = Depends(get_database)):
+    """
+    Matches resumes to job descriptions and stores the results in the database.
+    """
     try:
-        labels_path = os.getenv('LABELS_PATH', 'C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/labels.json')
-        job_desc_path = os.getenv('JOB_DESC_PATH', 'C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/job_description_by_spacy.csv')
-        resumes_path = os.getenv('RESUMES_PATH', 'C:/Users/Moon/Downloads/Job-Resume-Matching-master/Resources/data/resumes_by_spacy.csv')
-
-        with open(labels_path) as fp:
+        with open(request.labels_path) as fp:
             labels = json.load(fp)
-        jobs = pd.read_csv(job_desc_path, index_col=0)
-        resumes = pd.read_csv(resumes_path, index_col=0)
+        jobs = pd.read_csv(request.job_desc_path, index_col=0)
+        resumes = pd.read_csv(request.resumes_path, index_col=0)
         resumes = modifying_type_resume(resumes)
         jobs = modifying_type_job(jobs)
         rules = Rules(labels, resumes, jobs)
@@ -155,7 +183,10 @@ async def matching():
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 @app.get("/top_resumes")
-async def top_resumes():
+async def top_resumes(database: AsyncIOMotorDatabase = Depends(get_database)):
+    """
+    Retrieves the top 5 resumes with the highest matching scores.
+    """
     try:
         top_resumes = database.matches.find().sort("matching_score", -1).limit(5)
         result = []
