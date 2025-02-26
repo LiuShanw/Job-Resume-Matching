@@ -1,3 +1,5 @@
+from gettext import install
+pip install FastAPI
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 import pandas as pd
