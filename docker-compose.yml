@@ -8,23 +8,23 @@ services:
       - .:/app
     ports:
       - 8008:8000
+    environment:
+      - MONGO_DETAILS=mongodb://matchingproject:matchingproject@mongodb:27017
   mongodb:
-      image: mongo
-      ports:
-        - 27010:27017
-      environment:
-        - MONGO_INITDB_ROOT_USERNAME=matchingproject
-        - MONGO_INITDB_ROOT_PASSWORD=matchingproject
-  #    volumes:
-  #      - mongo-data:/data/db
+    image: mongo
+    ports:
+      - 27010:27017
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=matchingproject
+      - MONGO_INITDB_ROOT_PASSWORD=matchingproject
   mongo-express:
-      image: mongo-express
-      restart: always # fixes MongoNetworkError when mongodb is not ready when mongo-express starts
-      ports:
-        - 8080:8081
-      environment:
-        - ME_CONFIG_MONGODB_ADMINUSERNAME=matchingproject
-        - ME_CONFIG_MONGODB_ADMINPASSWORD=matchingproject
-        - ME_CONFIG_MONGODB_SERVER=mongodb
+    image: mongo-express
+    restart: always
+    ports:
+      - 8081:8081
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=matchingproject
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=matchingproject
+      - ME_CONFIG_MONGODB_SERVER=mongodb
 
 

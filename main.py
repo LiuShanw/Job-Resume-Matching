@@ -198,3 +198,7 @@ async def top_resumes(database: AsyncIOMotorDatabase = Depends(get_database)):
     except Exception as e:
         logger.error(f"Error in top_resumes endpoint: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
