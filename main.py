@@ -10,9 +10,9 @@ from pydantic import BaseModel, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
 from bson import ObjectId
 from typing import Dict, Any, List
-#from job_extraction_module import JobInfoExtraction
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from transformers import BertTokenizer, BertModel
+from fastapi.encoders import jsonable_encoder  # Add this import
 
 # Allow running async code in Jupyter
 import nest_asyncio
@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Create the FastAPI app
 app = FastAPI()
-
 
 @app.get("/")
 def read_root():
@@ -107,7 +106,6 @@ def load_gemini_model():
 
 gemini_model = load_gemini_model()
 
-
 # Block 5: Utility Functions
 def transform_dataframe_to_json(dataframe: pd.DataFrame) -> str:
     result = dataframe.to_json(orient="records")
@@ -136,7 +134,6 @@ def modifying_type_job(jobs: pd.DataFrame) -> pd.DataFrame:
     except Exception as e:
         logger.error(f"Error in modifying_type_job: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing jobs: {e}")
-
 
 # Block 6: Request Models
 class ExtractionRequest(BaseModel):
@@ -193,12 +190,10 @@ async def extraction(request: ExtractionRequest, database: AsyncIOMotorDatabase 
         logger.error(f"Error in extraction endpoint: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-
 # Block 8: Server Startup
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
 
 # Block 9: Test the Server
 import requests
@@ -212,12 +207,11 @@ payload = {
 }
 
 # Make a POST request to the /extraction endpoint
-#response = requests.post("http://localhost:8000/extraction", json=payload)
+# response = requests.post("http://localhost:8000/extraction", json=payload)
 
 # Print the response
-#print(response.status_code)
-#print(response.json())
-
+# print(response.status_code)
+# print(response.json())
 
 # Block 10: Verify the Database
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -236,3 +230,45 @@ async def fetch_data():
 import asyncio
 data = asyncio.run(fetch_data())
 print(data)
+
+import pandas as pd
+import json
+import re
+
+class JobInfoExtraction:
+    def __init__(self, skills_patterns_path: str, majors_patterns_path: str, degrees_patterns_path: str, jobs: pd.DataFrame):
+        self.skills_patterns = self.load_patterns(skills_patterns_path)
+        self.majors_patterns = self.load_patterns(majors_patterns_path)
+        self.degrees_patterns = self.load_patterns(degrees_patterns_path)
+        self.jobs = jobs
+
+    def load_patterns(self, path: str) -> List[str]:
+        with open(path, 'r') as file:
+            patterns = [line.strip() for line in file]
+        return patterns
+
+    def extract_entities(self, jobs: pd.DataFrame) -> pd.DataFrame:
+        jobs['Minimum degree level'] = jobs['Qualifications'].apply(self.extract_degree)
+        jobs['Acceptable majors'] = jobs['Qualifications'].apply(self.extract_majors)
+        jobs['Skills'] = jobs['Qualifications'].apply(self.extract_skills)
+        return jobs
+
+    def extract_degree(self, text: str) -> str:
+        for pattern in self.degrees_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                return pattern
+        return ''
+
+    def extract_majors(self, text: str) -> List[str]:
+        majors = []
+        for pattern in self.majors_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                majors.append(pattern)
+        return majors
+
+    def extract_skills(self, text: str) -> List[str]:
+        skills = []
+        for pattern in self.skills_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                skills.append(pattern)
+        return skills
